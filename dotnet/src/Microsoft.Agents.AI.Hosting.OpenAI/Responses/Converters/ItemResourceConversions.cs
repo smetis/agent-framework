@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Text.Json;
@@ -20,46 +20,68 @@ internal static class ItemResourceConversions
     public static List<ChatMessage> ToChatMessages(IEnumerable<ItemResource> items)
     {
         var messages = new List<ChatMessage>();
+        List<AIContent>? currentAssistantContents = null;
+
+        void FlushAssistant()
+        {
+            if (currentAssistantContents?.Count > 0)
+            {
+                messages.Add(new ChatMessage(ChatRole.Assistant, currentAssistantContents));
+                currentAssistantContents = null;
+            }
+        }
 
         foreach (var item in items)
         {
-            switch (item)
+            if (item is ResponsesAssistantMessageItemResource || item is FunctionToolCallItemResource)
             {
-                case ResponsesUserMessageItemResource userMsg:
-                    messages.Add(new ChatMessage(ChatRole.User, ConvertContents(userMsg.Content)));
-                    break;
+                if (currentAssistantContents == null)
+                {
+                    currentAssistantContents = new List<AIContent>();
+                }
 
-                case ResponsesAssistantMessageItemResource assistantMsg:
-                    messages.Add(new ChatMessage(ChatRole.Assistant, ConvertContents(assistantMsg.Content)));
-                    break;
-
-                case ResponsesSystemMessageItemResource systemMsg:
-                    messages.Add(new ChatMessage(ChatRole.System, ConvertContents(systemMsg.Content)));
-                    break;
-
-                case ResponsesDeveloperMessageItemResource developerMsg:
-                    messages.Add(new ChatMessage(new ChatRole("developer"), ConvertContents(developerMsg.Content)));
-                    break;
-
-                case FunctionToolCallItemResource funcCall:
+                if (item is ResponsesAssistantMessageItemResource assistantMsg)
+                {
+                    currentAssistantContents.AddRange(ConvertContents(assistantMsg.Content));
+                }
+                else if (item is FunctionToolCallItemResource funcCall)
+                {
                     var arguments = ParseArguments(funcCall.Arguments);
-                    messages.Add(new ChatMessage(ChatRole.Assistant,
-                    [
-                        new FunctionCallContent(funcCall.CallId, funcCall.Name, arguments)
-                    ]));
-                    break;
+                    currentAssistantContents.Add(new FunctionCallContent(funcCall.CallId, funcCall.Name, arguments));
+                }
+            }
+            else
+            {
+                FlushAssistant();
 
-                case FunctionToolCallOutputItemResource funcOutput:
-                    messages.Add(new ChatMessage(ChatRole.Tool,
-                    [
-                        new FunctionResultContent(funcOutput.CallId, funcOutput.Output)
-                    ]));
-                    break;
+                switch (item)
+                {
+                    case ResponsesUserMessageItemResource userMsg:
+                        messages.Add(new ChatMessage(ChatRole.User, ConvertContents(userMsg.Content)));
+                        break;
 
-                    // Skip all other item types (reasoning, executor_action, web_search, etc.)
-                    // They are not relevant for conversation context.
+                    case ResponsesSystemMessageItemResource systemMsg:
+                        messages.Add(new ChatMessage(ChatRole.System, ConvertContents(systemMsg.Content)));
+                        break;
+
+                    case ResponsesDeveloperMessageItemResource developerMsg:
+                        messages.Add(new ChatMessage(new ChatRole("developer"), ConvertContents(developerMsg.Content)));
+                        break;
+
+                    case FunctionToolCallOutputItemResource funcOutput:
+                        messages.Add(new ChatMessage(ChatRole.Tool,
+                        [
+                            new FunctionResultContent(funcOutput.CallId, funcOutput.Output)
+                        ]));
+                        break;
+
+                        // Skip all other item types (reasoning, executor_action, web_search, etc.)
+                        // They are not relevant for conversation context.
+                }
             }
         }
+
+        FlushAssistant();
 
         return messages;
     }
